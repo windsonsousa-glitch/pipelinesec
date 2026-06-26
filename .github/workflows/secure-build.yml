@@ -1,84 +1,103 @@
-name: Secure Build Pipeline
+# Nome do workflow exibido na aba Actions do repositório
+name: Secure Build
 
+# Gatilhos: executa em qualquer push em qualquer branch e em pull requests para a main
 on:
   push:
-    branches: [ main ]
+    branches:
+      - '**'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
 
+# Variáveis reutilizáveis para nome e tag da imagem Docker
 env:
-  DOCKER_IMAGE: my-image
+  IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/app
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
+  # Job principal: build, testes de segurança, assinatura e geração de SBOM
   secure-build:
-    name: Secure Build, Scan & Sign
     runs-on: ubuntu-latest
+
+    # Permissões mínimas necessárias para checkout, Cosign keyless via OIDC e upload de eventos de segurança
     permissions:
       contents: read
-      id-token: write          # Cosign keyless via OIDC
-      security-events: write   # Upload SARIF
+      id-token: write
+      security-events: write
 
     steps:
-      - name: Checkout
+      # a. Checkout do código-fonte do repositório
+      - name: Checkout do código
         uses: actions/checkout@v4
 
+      # b. Login no Docker Hub usando as credenciais armazenadas em secrets
       - name: Login no Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build da imagem
-        run: docker build -t ${{ env.DOCKER_IMAGE }}:${{ github.sha }} .
+      # c. Build da imagem Docker com tag baseada no SHA do commit
+      - name: Build da imagem Docker
+        run: docker build -t "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}" .
 
-      # --- ETAPA 1: CIS Docker Benchmark com Dockle ---
-      - name: Dockle - CIS Docker Benchmark
+      # Push da imagem para o registry, necessário para que o Cosign possa assinar via digest
+      - name: Push da imagem Docker para o Docker Hub
+        run: docker push "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
+
+      # d. Dockle: validação da imagem contra o CIS Docker Benchmark
+      - name: Executar Dockle (CIS Docker Benchmark)
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            goodwithtech/dockle:v0.4.14 \
-            --exit-code 1 --exit-level fatal \
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          docker run --rm \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            goodwithtech/dockle:latest \
+            --exit-code 1 \
+            --exit-level fatal \
+            "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
 
-      # --- ETAPA 2: Trivy - CVEs e Secrets ---
-      - name: Trivy - Scan de vulnerabilidades
-        uses: aquasecurity/trivy-action@master
+      # e. Trivy: escaneamento por vulnerabilidades críticas e secrets em formato SARIF
+      - name: Escanear imagem por CVEs e secrets com Trivy
+        uses: aquasecurity/trivy-action@0.20.0
         with:
-          scan-type: 'image'
-          image-ref: '${{ env.DOCKER_IMAGE }}:${{ github.sha }}'
+          image-ref: '${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           exit-code: '1'
           severity: 'CRITICAL'
+          scanners: 'vuln,secret'
 
-      - name: Upload SARIF
+      # Upload do relatório SARIF gerado pelo Trivy para o GitHub Security tab
+      - name: Enviar relatório SARIF para o GitHub
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
           sarif_file: 'trivy-results.sarif'
 
-      # --- ETAPA 3: Cosign - Assinatura keyless ---
+      # f. Cosign: instalação do binário na versão solicitada
       - name: Instalar Cosign
         uses: sigstore/cosign-installer@v3.5.0
 
-      - name: Assinar imagem (keyless via OIDC)
+      # Cosign: assinatura keyless da imagem via OIDC fornecido pelo GitHub Actions
+      - name: Assinar imagem com Cosign (keyless via OIDC)
         env:
           COSIGN_EXPERIMENTAL: 1
         run: |
-          cosign sign --yes \
-            ${{ env.DOCKER_IMAGE }}:${{ github.sha }}
+          DIGEST=$(docker inspect --format='{{index .RepoDigests 0}}' "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
+          cosign sign --yes "$DIGEST"
 
-      # --- ETAPA 4: SBOM CycloneDX ---
-      - name: Gerar SBOM CycloneDX
-        uses: aquasecurity/trivy-action@master
+      # g. SBOM CycloneDX: geração do inventário de componentes da imagem
+      - name: Gerar SBOM CycloneDX com Trivy
+        uses: aquasecurity/trivy-action@0.20.0
         with:
-          scan-type: 'image'
-          image-ref: '${{ env.DOCKER_IMAGE }}:${{ github.sha }}'
+          image-ref: '${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}'
           format: 'cyclonedx'
-          output: 'sbom.cdx.json'
+          output: 'sbom.cyclonedx.json'
+          exit-code: '0'
 
-      - name: Publicar SBOM como artefato
+      # Publicação do SBOM gerado como artefato para download
+      - name: Publicar SBOM CycloneDX como artefato
         uses: actions/upload-artifact@v4
         with:
           name: sbom-cyclonedx
-          path: sbom.cdx.json
-          if-no-files-found: error
+          path: sbom.cyclonedx.json
