@@ -6,7 +6,7 @@ on:
   pull_request:
     branches:
       - main
-environment:
+env:
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/app
   IMAGE_TAG: ${{ github.sha }}
 jobs:
