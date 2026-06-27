@@ -66,3 +66,5 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: sbom.cyclonedx.json
+
+  workflow_dispatch:
