@@ -6,6 +6,7 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
 env:
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/app
   IMAGE_TAG: ${{ github.sha }}
@@ -66,5 +67,3 @@ jobs:
         with:
           name: sbom-cyclonedx
           path: sbom.cyclonedx.json
-
-  workflow_dispatch:
