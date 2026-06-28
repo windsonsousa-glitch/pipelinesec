@@ -35,7 +35,7 @@ jobs:
             --exit-code 1 --exit-level fatal \
             "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
       - name: Trivy scan
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           format: sarif
@@ -44,12 +44,12 @@ jobs:
           severity: CRITICAL
           scanners: "vuln,secret"
       - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-results.sarif
       - name: Instalar Cosign
-        uses: sigstore/cosign-installer@v3.5.0
+        uses: sigstore/cosign-installer@v3.8.1
       - name: Assinar imagem keyless
         env:
           COSIGN_EXPERIMENTAL: 1
@@ -57,7 +57,7 @@ jobs:
           DIGEST=$(docker inspect --format="{{index .RepoDigests 0}}" "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}")
           cosign sign --yes "$DIGEST"
       - name: Gerar SBOM CycloneDX
-        uses: aquasecurity/trivy-action@0.20.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: "${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}"
           format: cyclonedx
